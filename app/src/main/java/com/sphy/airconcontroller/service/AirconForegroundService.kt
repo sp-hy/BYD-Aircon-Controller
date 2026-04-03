@@ -7,6 +7,7 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.sphy.airconcontroller.R
 import com.sphy.airconcontroller.ble.BleCommandListener
@@ -36,7 +37,9 @@ class AirconForegroundService : Service() {
     }
 
     private fun handleBleCommand(command: Byte) {
-        // Intentionally ignored: remote climate commands are disabled for safety.
+        // Remote climate is still disabled; log so you can verify the path (e.g. adb logcat -s AirconBLE:I).
+        val b = command.toInt() and 0xff
+        Log.i("AirconBLE", "ESP32 button/notify byte=0x${b.toString(16).padStart(2, '0')}")
     }
 
     private fun buildNotification(): Notification {

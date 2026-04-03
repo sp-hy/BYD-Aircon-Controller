@@ -19,11 +19,25 @@ constexpr char INFO_CHAR_UUID[] = "e90d8e4e-cf9b-4dcc-859b-f8c1db9bea60";
 NimBLECharacteristic *commandChar = nullptr;
 bool lastButtonState = HIGH;
 unsigned long lastEdgeMs = 0;
+
+/** After a central disconnects, advertising must be restarted or reconnects will fail. */
+class AirconServerCallbacks : public NimBLEServerCallbacks {
+  void onDisconnect(NimBLEServer *pServer, NimBLEConnInfo &connInfo,
+                      int reason) override {
+    (void)pServer;
+    (void)connInfo;
+    (void)reason;
+    NimBLEDevice::startAdvertising();
+  }
+};
+
+static AirconServerCallbacks serverCallbacks;
 } // namespace
 
 void setupBle() {
   NimBLEDevice::init(DEVICE_NAME);
   NimBLEServer *server = NimBLEDevice::createServer();
+  server->setCallbacks(&serverCallbacks);
   NimBLEService *service = server->createService(SERVICE_UUID);
 
   commandChar = service->createCharacteristic(

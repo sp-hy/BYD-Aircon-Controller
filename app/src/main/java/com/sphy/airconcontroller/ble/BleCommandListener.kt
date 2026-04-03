@@ -17,6 +17,8 @@ import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -33,6 +35,12 @@ class BleCommandListener(
     private var gatt: BluetoothGatt? = null
     @Volatile
     private var stopped = false
+
+    /** True only while a LE scan is active (avoid stopScan when none → "could not find callback wrapper"). */
+    private var scanActive = false
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private var reconnectRunnable: Runnable? = null
 
     private val serviceUuid = UUID.fromString("0f1d2a40-2f5f-4a4d-b3c1-91f7b799f0a1")
     private val commandUuid = UUID.fromString("8388fdd2-cd4e-4f6d-a32f-03c2f0bc62a5")
@@ -110,12 +118,73 @@ class BleCommandListener(
         for (device in bonded) {
             val name = device.name ?: continue
             if (!name.startsWith(prefix, ignoreCase = true)) continue
-            adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+            stopScanSafe()
             onConnectionState(BleConnectionState.CONNECTING)
             connect(device)
             return true
         }
         return false
+    }
+
+    private fun stopScanSafe() {
+        if (!scanActive) return
+        try {
+            adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        } catch (_: Exception) {
+        }
+        scanActive = false
+    }
+
+    private fun cancelReconnect() {
+        reconnectRunnable?.let { mainHandler.removeCallbacks(it) }
+        reconnectRunnable = null
+    }
+
+    /** Close GATT before opening a new connection; swallow Binder death after BT toggle. */
+    private fun safeCloseGatt() {
+        try {
+            gatt?.close()
+        } catch (_: Exception) {
+        }
+        gatt = null
+    }
+
+    /**
+     * After the link drops, the ESP32 must advertise again (see firmware); we retry bonded connect
+     * or scan until [stop] is called.
+     */
+    private fun scheduleReconnect() {
+        if (stopped) return
+        cancelReconnect()
+        val r = Runnable {
+            if (stopped) return@Runnable
+            beginConnectionAttempt()
+        }
+        reconnectRunnable = r
+        mainHandler.postDelayed(r, 800L)
+    }
+
+    private fun beginConnectionAttempt() {
+        if (stopped) return
+        if (!hasPermission()) {
+            onConnectionState(BleConnectionState.IDLE)
+            return
+        }
+        val scanner = adapter?.bluetoothLeScanner ?: run {
+            onConnectionState(BleConnectionState.IDLE)
+            return
+        }
+        if (tryConnectBondedDevice()) return
+        onConnectionState(BleConnectionState.SCANNING)
+        stopScanSafe()
+        try {
+            scanner.startScan(null, scanSettings, scanCallback)
+            scanActive = true
+        } catch (_: Exception) {
+            scanActive = false
+            onConnectionState(BleConnectionState.DISCONNECTED)
+            scheduleReconnect()
+        }
     }
 
     private val scanSettings: ScanSettings
@@ -134,13 +203,17 @@ class BleCommandListener(
 
         override fun onScanFailed(errorCode: Int) {
             super.onScanFailed(errorCode)
-            if (!stopped) onConnectionState(BleConnectionState.DISCONNECTED)
+            scanActive = false
+            if (!stopped) {
+                onConnectionState(BleConnectionState.DISCONNECTED)
+                scheduleReconnect()
+            }
         }
     }
 
     private fun handleScanResult(result: ScanResult) {
         if (!isTargetDevice(result)) return
-        adapter?.bluetoothLeScanner?.stopScan(scanCallback)
+        stopScanSafe()
         onConnectionState(BleConnectionState.CONNECTING)
         connect(result.device)
     }
@@ -149,10 +222,15 @@ class BleCommandListener(
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             if (stopped) return
             when (newState) {
-                BluetoothProfile.STATE_CONNECTED ->
+                BluetoothProfile.STATE_CONNECTED -> {
+                    cancelReconnect()
                     onConnectionState(BleConnectionState.CONNECTED)
-                BluetoothProfile.STATE_DISCONNECTED ->
+                }
+                BluetoothProfile.STATE_DISCONNECTED -> {
                     onConnectionState(BleConnectionState.DISCONNECTED)
+                    safeCloseGatt()
+                    scheduleReconnect()
+                }
             }
         }
 
@@ -178,36 +256,30 @@ class BleCommandListener(
     }
 
     fun start() {
-        if (!hasPermission()) {
-            onConnectionState(BleConnectionState.IDLE)
-            return
-        }
-        val scanner = adapter?.bluetoothLeScanner ?: run {
-            onConnectionState(BleConnectionState.IDLE)
-            return
-        }
         stopped = false
-        if (tryConnectBondedDevice()) return
-        onConnectionState(BleConnectionState.SCANNING)
-        scanner.startScan(null, scanSettings, scanCallback)
+        cancelReconnect()
+        beginConnectionAttempt()
     }
 
     fun stop() {
         stopped = true
-        adapter?.bluetoothLeScanner?.stopScan(scanCallback)
-        gatt?.close()
-        gatt = null
+        cancelReconnect()
+        stopScanSafe()
+        safeCloseGatt()
         onConnectionState(BleConnectionState.IDLE)
     }
 
     @SuppressLint("MissingPermission")
     private fun connect(device: BluetoothDevice) {
         if (!hasPermission()) return
+        // Bonded: autoConnect=true lets the OS whitelist reconnects (better link behavior in Settings
+        // and fewer spurious drops). First-time / unpaired: false for a fast direct connection.
+        val autoConnect = device.bondState == BluetoothDevice.BOND_BONDED
         gatt = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            device.connectGatt(context, false, gattCallback, BluetoothDevice.TRANSPORT_LE)
+            device.connectGatt(context, autoConnect, gattCallback, BluetoothDevice.TRANSPORT_LE)
         } else {
             @Suppress("DEPRECATION")
-            device.connectGatt(context, false, gattCallback)
+            device.connectGatt(context, autoConnect, gattCallback)
         }
     }
 

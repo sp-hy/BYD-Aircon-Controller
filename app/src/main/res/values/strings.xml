@@ -12,6 +12,7 @@
     <string name="ble_status_connecting">ESP32: connecting…</string>
     <string name="ble_status_connected">ESP32: connected</string>
     <string name="ble_status_disconnected">ESP32: disconnected</string>
+    <string name="ble_system_settings_hint">System Bluetooth often lists custom BLE devices under saved devices only. Use the status above while the listener is running.</string>
     <string name="save_settings">Save settings</string>
     <string name="test_login">Test login</string>
     <string name="toggle_aircon_test">Turn climate on test</string>
