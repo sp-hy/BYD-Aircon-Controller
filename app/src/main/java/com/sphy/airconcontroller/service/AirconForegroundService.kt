@@ -38,9 +38,15 @@ class AirconForegroundService : Service() {
 
     private fun handleBleCommand(command: Byte) {
         // Remote climate is still disabled; log so you can verify the path (e.g. adb logcat -s AirconBLE:I).
-        // Byte = pin number: 0x00=D0 … 0x03=D3 (matches firmware).
+        // Byte = Arduino D number on ESP32: 0x01=D1 … 0x04=D4 (firmware omits D0).
         val b = command.toInt() and 0xff
-        val pin = if (b in 0..3) "D$b" else "?"
+        val pin = when (b) {
+            0x01 -> "D1"
+            0x02 -> "D2"
+            0x03 -> "D3"
+            0x04 -> "D4"
+            else -> "?"
+        }
         Log.i(
             "AirconBLE",
             "ESP32 button/notify $pin byte=0x${b.toString(16).padStart(2, '0')}"
