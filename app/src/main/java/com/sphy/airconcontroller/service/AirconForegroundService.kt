@@ -10,6 +10,8 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.sphy.airconcontroller.R
 import com.sphy.airconcontroller.ble.BleCommandListener
+import com.sphy.airconcontroller.ble.BleConnectionRegistry
+import com.sphy.airconcontroller.ble.BleConnectionState
 import com.sphy.airconcontroller.storage.CredentialsStore
 
 class AirconForegroundService : Service() {
@@ -22,11 +24,13 @@ class AirconForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        bleListener?.stop()
         val creds = CredentialsStore(this).load()
         bleListener = BleCommandListener(
             context = this,
             targetName = creds.espDeviceName,
-            onCommand = ::handleBleCommand
+            onCommand = ::handleBleCommand,
+            onConnectionState = BleConnectionRegistry::setState
         ).also { it.start() }
         return START_STICKY
     }
@@ -59,6 +63,7 @@ class AirconForegroundService : Service() {
     override fun onDestroy() {
         bleListener?.stop()
         bleListener = null
+        BleConnectionRegistry.setState(BleConnectionState.IDLE)
         super.onDestroy()
     }
 

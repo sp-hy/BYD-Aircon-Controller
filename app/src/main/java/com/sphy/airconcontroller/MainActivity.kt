@@ -6,11 +6,15 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Button
+import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.google.android.material.snackbar.Snackbar
 import com.google.android.material.textfield.TextInputEditText
+import com.sphy.airconcontroller.ble.BleConnectionRegistry
+import com.sphy.airconcontroller.ble.BleConnectionState
+import com.sphy.airconcontroller.ble.toDisplayString
 import com.sphy.airconcontroller.byd.BydApiClient
 import com.sphy.airconcontroller.byd.BydConfig
 import com.sphy.airconcontroller.service.AirconForegroundService
@@ -21,6 +25,11 @@ import kotlin.concurrent.thread
 class MainActivity : ComponentActivity() {
     private lateinit var store: CredentialsStore
     private lateinit var bydApiClient: BydApiClient
+    private lateinit var bleStatusText: TextView
+
+    private val bleStatusListener: (BleConnectionState) -> Unit = { state ->
+        bleStatusText.text = state.toDisplayString(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -36,6 +45,7 @@ class MainActivity : ComponentActivity() {
         val countryCodeInput = findViewById<TextInputEditText>(R.id.countryCodeInput)
         val baseUrlInput = findViewById<TextInputEditText>(R.id.baseUrlInput)
         val deviceNameInput = findViewById<TextInputEditText>(R.id.deviceNameInput)
+        bleStatusText = findViewById(R.id.bleStatusText)
         val saveButton = findViewById<Button>(R.id.saveButton)
         val testLoginButton = findViewById<Button>(R.id.testLoginButton)
         val turnAirconOnTestButton = findViewById<Button>(R.id.toggleAirconTestButton)
@@ -159,6 +169,16 @@ class MainActivity : ComponentActivity() {
             stopService(Intent(this, AirconForegroundService::class.java))
             Snackbar.make(it, R.string.service_stopped, Snackbar.LENGTH_SHORT).show()
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        BleConnectionRegistry.addListener(bleStatusListener)
+    }
+
+    override fun onStop() {
+        BleConnectionRegistry.removeListener(bleStatusListener)
+        super.onStop()
     }
 
     private fun hasBluetoothPermissions(): Boolean {
