@@ -111,4 +111,36 @@ internal object SeatClimateParams {
             put("steeringWheelHeatState", 3)
         }
     }
+
+    /**
+     * Seat heat channels use 1/2/3 for HIGH/LOW/OFF. A merged value of **0** means "no data" from
+     * [getStatusNow]; some head units mis-handle 0 next to vent OFF and drop climate. Map 0 → 3 (OFF).
+     */
+    fun normalizeFrontSeatHeatNotApplicable(params: JSONObject) {
+        if (params.optInt("mainHeat", -1) == 0) params.put("mainHeat", 3)
+        if (params.optInt("copilotHeat", -1) == 0) params.put("copilotHeat", 3)
+    }
+
+    /**
+     * A seat cannot heat and ventilate at the same time. When turning one mode **on** (LOW/HIGH),
+     * force the opposite mode to command OFF (3). Matches real vehicle behaviour and avoids API 1001.
+     */
+    fun applyHeatVentMutualExclusion(
+        params: JSONObject,
+        position: SeatPosition,
+        mode: SeatMode,
+        level: SeatLevel
+    ) {
+        if (level == SeatLevel.OFF) return
+        when (position) {
+            SeatPosition.DRIVER -> when (mode) {
+                SeatMode.HEAT -> params.put("mainVentilation", 3)
+                SeatMode.COOL -> params.put("mainHeat", 3)
+            }
+            SeatPosition.PASSENGER -> when (mode) {
+                SeatMode.HEAT -> params.put("copilotVentilation", 3)
+                SeatMode.COOL -> params.put("copilotHeat", 3)
+            }
+        }
+    }
 }

@@ -240,13 +240,21 @@ class BydApiClient(
                     SeatMode.COOL -> put("copilotVentilation", level.commandValue)
                 }
             }
+            SeatClimateParams.applyHeatVentMutualExclusion(this, position, mode, level)
+            SeatClimateParams.normalizeFrontSeatHeatNotApplicable(this)
             put("chairType", position.chairType)
             put("remoteMode", 1)
         }
 
         payload.put("controlParamsMap", controlParams.toString())
 
-        postTokenJson(config, "/control/remoteControl", payload)
+        runCatching {
+            postTokenJson(config, "/control/remoteControl", payload)
+        }.onFailure { ex ->
+            val msg = ex.message.orEmpty()
+            if (!msg.contains("/control/remoteControl failed: code=1001")) throw ex
+            // Same intermittent "Service error" as remoteControlResult; command may still apply.
+        }
         repeat(10) {
             val poll = buildInnerBase()
                 .put("vin", vin)
