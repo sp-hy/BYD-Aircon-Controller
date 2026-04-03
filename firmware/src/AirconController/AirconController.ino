@@ -41,7 +41,8 @@ constexpr int POT_EMA_DEN = 4;
 // Pot calibration (based on your observed raw range).
 // These map the analog dial to the car scale [17..33] where:
 // 17 = Low, 33 = High.
-constexpr int POT_CAL_MIN_RAW = 90;
+// Use a floor close to the actual minimum you see in Serial (e.g. ~300).
+constexpr int POT_CAL_MIN_RAW = 300;
 constexpr int POT_CAL_MAX_RAW = 3780;
 
 // Car display bounds (inclusive).
@@ -56,6 +57,8 @@ constexpr char INFO_CHAR_UUID[] = "e90d8e4e-cf9b-4dcc-859b-f8c1db9bea60";
 NimBLECharacteristic *commandChar = nullptr;
 unsigned long lastPotLogMs = 0;
 int potFiltered = -1;
+int lastSentTemp = -1;
+unsigned long lastSentTempMs = 0;
 
 /** Average many ADC reads + exponential smoothing so the "floor" and dial position don't jump. */
 int readPotStable() {
@@ -171,6 +174,15 @@ void loop() {
     // Approximate mV from filtered raw (matches ~0–3300 mV at 11 dB on 12-bit).
     int mv = (raw * 3300) / 4095;
     int mapped = mapPotRawToCarScale(raw);
+    // Only notify Android when the mapped temp actually changes, and at least 150 ms since last send.
+    if (commandChar != nullptr && mapped != lastSentTemp && (now - lastSentTempMs) >= 150) {
+      uint8_t tempByte = static_cast<uint8_t>(mapped & 0xFF);
+      commandChar->setValue(&tempByte, 1);
+      commandChar->notify();
+      lastSentTemp = mapped;
+      lastSentTempMs = now;
+      Serial.printf("Sent BLE temp mapped=%d\n", mapped);
+    }
     Serial.printf(
         "POT A0 raw=%d ~mV=%d mapped=%d (range %d..%d -> %d..%d)\n",
         raw,

@@ -158,6 +158,18 @@ class BydApiClient(
         return status == 1
     }
 
+    /**
+     * Raw JSON from `/control/getStatusNow` (decrypted). Used to build seat commands that mirror
+     * pyBYD [SeatClimateParams.from_current_state].
+     */
+    fun fetchHvacStatusNow(config: BydConfig, vin: String): JSONObject {
+        val response = postTokenJson(config, "/control/getStatusNow", buildInnerBase().put("vin", vin))
+        return when (response) {
+            is JSONObject -> response
+            else -> JSONObject()
+        }
+    }
+
     fun verifyControlPassword(config: BydConfig, vin: String): Boolean {
         val inner = buildInnerBase()
             .put("vin", vin)
@@ -191,6 +203,75 @@ class BydApiClient(
 
     fun toggleClimate(config: BydConfig, vin: String, currentlyOn: Boolean): CommandResult {
         return if (currentlyOn) stopClimate(config, vin) else startClimate(config, vin)
+    }
+
+    fun setSeatClimate(
+        config: BydConfig,
+        vin: String,
+        position: SeatPosition,
+        mode: SeatMode,
+        level: SeatLevel
+    ): CommandResult {
+        val requestSerial = UUID.randomUUID().toString()
+        val payload = buildInnerBase()
+            .put("vin", vin)
+            .put("commandType", "VENTILATIONHEATING")
+            .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
+            .put("requestSerial", requestSerial)
+
+        // BYD expects every seat field on each command. Merge with live /control/getStatusNow like pyBYD
+        // SeatClimateParams.from_current_state(), then apply one change (camelCase keys per pyBYD).
+        val statusRoot = runCatching { fetchHvacStatusNow(config, vin) }.getOrNull()
+        val statusSlice = statusRoot?.let { SeatClimateParams.effectiveStatusSlice(it) }
+        val base = when {
+            statusSlice == null || statusSlice.length() == 0 -> SeatClimateParams.fallbackDefaults()
+            !SeatClimateParams.sliceContainsSeatHints(statusSlice) -> SeatClimateParams.fallbackDefaults()
+            else -> SeatClimateParams.fromHvacStatusJson(statusSlice)
+        }
+
+        val controlParams = JSONObject(base.toString()).apply {
+            when (position) {
+                SeatPosition.DRIVER -> when (mode) {
+                    SeatMode.HEAT -> put("mainHeat", level.commandValue)
+                    SeatMode.COOL -> put("mainVentilation", level.commandValue)
+                }
+                SeatPosition.PASSENGER -> when (mode) {
+                    SeatMode.HEAT -> put("copilotHeat", level.commandValue)
+                    SeatMode.COOL -> put("copilotVentilation", level.commandValue)
+                }
+            }
+            put("chairType", position.chairType)
+            put("remoteMode", 1)
+        }
+
+        payload.put("controlParamsMap", controlParams.toString())
+
+        postTokenJson(config, "/control/remoteControl", payload)
+        repeat(10) {
+            val poll = buildInnerBase()
+                .put("vin", vin)
+                .put("commandType", "VENTILATIONHEATING")
+                .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
+                .put("requestSerial", requestSerial)
+            val result = try {
+                postTokenJson(config, "/control/remoteControlResult", poll) as? JSONObject ?: JSONObject()
+            } catch (ex: IllegalStateException) {
+                if (ex.message?.contains("/control/remoteControlResult failed: code=1001") == true) {
+                    return CommandResult(success = true, controlState = 1, requestSerial = requestSerial)
+                }
+                throw ex
+            }
+            val res = result.optInt("res", 0)
+            val controlState = result.optInt("controlState", 0)
+            val done = (res >= 2) || (controlState != 0) || result.has("result")
+            if (done) {
+                val success = (res == 2) || (controlState == 1)
+                val finalState = if (controlState != 0) controlState else if (success) 1 else 2
+                return CommandResult(success, finalState, requestSerial)
+            }
+            Thread.sleep(1500)
+        }
+        return CommandResult(success = false, controlState = 0, requestSerial = requestSerial)
     }
 
     private fun remoteControl(
