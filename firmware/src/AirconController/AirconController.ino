@@ -1,5 +1,5 @@
-// Arduino IDE: install "NimBLE-Arduino" by h2zero (Library Manager). Board:
-// ESP32C6 Dev Module.
+// Arduino IDE: install "NimBLE-Arduino" by h2zero (Library Manager).
+// Board: Seeed XIAO ESP32C6 (ESP32C6 Dev Module or Seeed board package).
 //
 // Phone/car "Bluetooth" settings may show "Connect" for BLE — that is not the
 // same as this app's GATT connection. Use the Aircon Controller foreground
@@ -8,7 +8,25 @@
 #include <NimBLEDevice.h>
 
 namespace {
-constexpr int BUTTON_PIN = 9;
+// Seeed XIAO ESP32-C6: use Arduino pin names (D0–D10). Tie each pin to GND to press (INPUT_PULLUP).
+// Notify byte = pin number: D0→0x00, D1→0x01, D2→0x02, D3→0x03 (one byte per press).
+struct InputPin {
+  int arduinoPin;
+  uint8_t notifyByte;
+  const char *label;
+  bool lastState;
+  unsigned long lastEdgeMs;
+  int lastLoggedLevel;
+};
+
+InputPin kInputs[] = {
+    {D0, 0x00, "D0", HIGH, 0, -1},
+    {D1, 0x01, "D1", HIGH, 0, -1},
+    {D2, 0x02, "D2", HIGH, 0, -1},
+    {D3, 0x03, "D3", HIGH, 0, -1},
+};
+
+constexpr size_t kNumInputs = sizeof(kInputs) / sizeof(kInputs[0]);
 constexpr unsigned long DEBOUNCE_MS = 180;
 
 constexpr char DEVICE_NAME[] = "BYD-Aircon";
@@ -17,8 +35,6 @@ constexpr char COMMAND_CHAR_UUID[] = "8388fdd2-cd4e-4f6d-a32f-03c2f0bc62a5";
 constexpr char INFO_CHAR_UUID[] = "e90d8e4e-cf9b-4dcc-859b-f8c1db9bea60";
 
 NimBLECharacteristic *commandChar = nullptr;
-bool lastButtonState = HIGH;
-unsigned long lastEdgeMs = 0;
 
 /** After a central disconnects, advertising must be restarted or reconnects will fail. */
 class AirconServerCallbacks : public NimBLEServerCallbacks {
@@ -58,28 +74,39 @@ void setupBle() {
 }
 
 void setup() {
-  pinMode(BUTTON_PIN, INPUT_PULLUP);
   Serial.begin(115200);
   delay(300);
   Serial.println("BYD Aircon BLE button boot");
+  for (size_t i = 0; i < kNumInputs; i++) {
+    pinMode(kInputs[i].arduinoPin, INPUT_PULLUP);
+    Serial.printf("%s: pin %d, INPUT_PULLUP — initial level=%d\n", kInputs[i].label,
+                   kInputs[i].arduinoPin, digitalRead(kInputs[i].arduinoPin));
+  }
   setupBle();
 }
 
 void loop() {
-  bool buttonState = digitalRead(BUTTON_PIN);
   unsigned long now = millis();
 
-  bool isFallingEdge = (lastButtonState == HIGH && buttonState == LOW);
-  bool debounced = (now - lastEdgeMs) >= DEBOUNCE_MS;
+  for (size_t i = 0; i < kNumInputs; i++) {
+    InputPin &in = kInputs[i];
+    bool st = digitalRead(in.arduinoPin);
 
-  if (isFallingEdge && debounced && commandChar != nullptr) {
-    uint8_t toggleCommand = 0x01; // 0x01 = toggle climate
-    commandChar->setValue(&toggleCommand, 1);
-    commandChar->notify();
-    lastEdgeMs = now;
-    Serial.println("Sent BLE command: toggle");
+    if ((int)st != in.lastLoggedLevel) {
+      in.lastLoggedLevel = st;
+      Serial.printf("%s (pin %d) level=%d\n", in.label, in.arduinoPin, st);
+    }
+
+    bool falling = (in.lastState == HIGH && st == LOW);
+    bool debounced = (now - in.lastEdgeMs) >= DEBOUNCE_MS;
+    if (falling && debounced && commandChar != nullptr) {
+      commandChar->setValue(&in.notifyByte, 1);
+      commandChar->notify();
+      in.lastEdgeMs = now;
+      Serial.printf("Sent BLE command: %s byte=0x%02x\n", in.label, in.notifyByte);
+    }
+    in.lastState = st;
   }
 
-  lastButtonState = buttonState;
   delay(8);
 }

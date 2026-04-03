@@ -225,6 +225,8 @@ class BleCommandListener(
                 BluetoothProfile.STATE_CONNECTED -> {
                     cancelReconnect()
                     onConnectionState(BleConnectionState.CONNECTED)
+                    // Required — otherwise onServicesDiscovered may never run and notifications stay disabled.
+                    gatt.discoverServices()
                 }
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     onConnectionState(BleConnectionState.DISCONNECTED)
@@ -235,12 +237,19 @@ class BleCommandListener(
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            val service: BluetoothGattService = gatt.getService(serviceUuid) ?: return
+            if (status != BluetoothGatt.GATT_SUCCESS) return
+            val service = gatt.getService(serviceUuid) ?: return
             val characteristic = service.getCharacteristic(commandUuid) ?: return
-            gatt.setCharacteristicNotification(characteristic, true)
+            if (!gatt.setCharacteristicNotification(characteristic, true)) return
             val descriptor = characteristic.getDescriptor(cccdUuid) ?: return
-            descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
-            gatt.writeDescriptor(descriptor)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                gatt.writeDescriptor(descriptor, BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)
+            } else {
+                @Suppress("DEPRECATION")
+                descriptor.value = BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE
+                @Suppress("DEPRECATION")
+                gatt.writeDescriptor(descriptor)
+            }
         }
 
         override fun onCharacteristicChanged(gatt: BluetoothGatt, characteristic: BluetoothGattCharacteristic) {
