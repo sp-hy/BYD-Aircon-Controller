@@ -1,0 +1,47 @@
+name: Build Flavors
+
+# Compile-verifies both SDK flavors so a change can't break one without notice.
+# DiLink-5 is compile-verification only: CI has no OEM SDK, and the real bydauto
+# classes are resolved at runtime from the car's installed system app
+# (Dilink5SdkInjector), so a CI-built dilink5 APK builds but is exercised on-car.
+#
+# NOTE: requires the dilink5 flavor to exist — land this with/after the D5 PR merge.
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  build:
+    name: Assemble dilink3 + dilink5 (debug)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: gradle
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # No keystore on CI: the debug build type falls back to the default debug
+      # keystore (see app/build.gradle.kts), and private-telemetry is absent, so
+      # this exercises exactly the public contributor build configuration.
+      - name: Assemble both flavors
+        run: ./gradlew assembleDilink3Debug assembleDilink5Debug
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: flavor-apks
+          path: app/build/outputs/apk/**/debug/*.apk
+          retention-days: 7

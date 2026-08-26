@@ -1,0 +1,14 @@
+# Code owners — GitHub auto-requests review from the owner when a PR touches
+# matching paths. Last matching pattern wins.
+#
+# @angoikon owns the project by default; @cagdasbas owns the DiLink-5 flavor.
+# Deliberately NOT co-owning the shared data source: @angoikon's DiLink-3
+# refactors should not auto-request review or block on the D5 maintainer.
+
+*                                                                   @angoikon
+
+# ── DiLink-5 flavor (owned by the D5 maintainer) ────────────────────────────
+/app/src/dilink5/**                                                 @cagdasbas
+/dilink5-stubsrc/**                                                 @cagdasbas
+/docs/DILINK5.md                                                    @cagdasbas
+/docs/DILINK5-PORT.md                                               @cagdasbas

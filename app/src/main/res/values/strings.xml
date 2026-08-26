@@ -1,42 +1,47 @@
 <resources>
   <string name="app_name">Aircon Controller</string>
-  <string name="settings_title">BYD Aircon Controller</string>
-  <string name="email_hint">BYD email</string>
-  <string name="password_hint">BYD password</string>
-  <string name="pin_hint">Control PIN (6 digits)</string>
-  <string name="country_code_hint">Country code (default: AU)</string>
-  <string name="api_base_hint">API base URL</string>
+  <string name="settings_title">BYD local climate</string>
   <string name="esp_device_hint">ESP32 BLE name (default: BYD-Aircon)</string>
+  <string name="ble_section_title">ESP32 listener</string>
   <string name="ble_status_idle">ESP32: listener stopped</string>
   <string name="ble_status_scanning">ESP32: scanning…</string>
   <string name="ble_status_connecting">ESP32: connecting…</string>
   <string name="ble_status_connected">ESP32: connected</string>
   <string name="ble_status_disconnected">ESP32: disconnected</string>
-  <string name="ble_system_settings_hint"
-    >1.1 System Bluetooth often lists custom BLE devices under saved devices only. Use the status above while the listener is running.</string
-  >
-  <string name="save_settings">Save settings</string>
-  <string name="test_login">Test login</string>
-  <string name="toggle_aircon_test">Turn climate on test</string>
   <string name="start_listener">Start listener service</string>
   <string name="stop_listener">Stop listener service</string>
-  <string name="settings_saved">Settings saved</string>
   <string name="service_running">Foreground listener is running</string>
   <string name="service_stopped">Foreground listener stopped</string>
   <string name="service_channel_name">BYD Aircon Listener</string>
   <string name="service_notification_title">BYD Aircon service active</string>
   <string name="service_notification_body">Listening for ESP32 Bluetooth commands</string>
   <string name="missing_permissions">Bluetooth permission is required.</string>
-  <string name="test_login_success">Login succeeded</string>
-  <string name="test_login_failed">Login failed. Check credentials or region URL.</string>
-  <string name="test_login_failed_with_reason">Login failed: %1$s</string>
-  <string name="toggle_aircon_test_on_success">Aircon test command succeeded: ON</string>
-  <string name="aircon_on_test_success">Aircon ON command succeeded</string>
-  <string name="toggle_aircon_test_off_success">Aircon test command succeeded: OFF</string>
-  <string name="toggle_aircon_test_failed">Aircon test command failed</string>
-  <string name="toggle_aircon_test_failed_with_reason">Aircon test failed: %1$s</string>
-  <string name="remote_climate_disabled_safety"
-    >Remote climate command disabled for safety while driving.</string
-  >
   <string name="error_unknown">unknown error</string>
+
+  <string name="authorize_adb">Authorize ADB / grant APIs</string>
+  <string name="refresh_status">Refresh AC status</string>
+  <string name="ac_on">Climate ON</string>
+  <string name="ac_off">Climate OFF</string>
+  <string name="temp_down">Temp −</string>
+  <string name="temp_up">Temp +</string>
+  <string name="fan_down">Fan −</string>
+  <string name="fan_up">Fan +</string>
+  <string name="ac_auto">Auto</string>
+  <string name="ac_recirc">Recirc</string>
+  <string name="ac_max_cool">Max cool</string>
+  <string name="dump_methods">Dump AC methods</string>
+  <string name="ac_status_placeholder">AC status will appear here after ADB setup.</string>
+  <string name="setup_needed">ADB setup needed. Enable USB debugging, then tap Authorize. Accept the car\'s USB debugging prompt.</string>
+  <string name="setup_connecting">Connecting to local ADB…</string>
+  <string name="setup_waiting_auth">Waiting for USB debugging Allow on the car screen…</string>
+  <string name="setup_granting">Granting vehicle API permissions…</string>
+  <string name="setup_ready">ADB authorized. Vehicle API grants applied.</string>
+  <string name="setup_failed">Setup failed: %1$s</string>
+  <string name="last_result_fmt">Last: %1$s via %2$s → %3$s</string>
+  <string name="command_ok">%1$s succeeded</string>
+  <string name="command_fail">%1$s failed: %2$s</string>
+  <string name="hidden_api_title">Allow vehicle data access?</string>
+  <string name="hidden_api_body">This app needs to relax a head-unit hidden-API restriction (scoped to BYD com.ts.* and dalvik.system) so it can bind the local climate SDK. Tap Allow — the setting is applied and the app restarts. This resets on car reboot and is re-applied next launch.</string>
+  <string name="hidden_api_allow">Allow</string>
+  <string name="hidden_api_not_now">Not now</string>
 </resources>

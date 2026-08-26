@@ -1,0 +1,7 @@
+# The HMAC secret must NEVER be committed — anyone with it can mint unlimited Pro
+# unlock codes. It lives only on the machine that issues codes.
+secret.key
+# Legacy RSA signing key (scheme retired), ignored in case an old checkout has one.
+private_key.pem
+# Local ledger of issued Pro codes (operational data / buyer details) — never commit.
+issued-codes.md
