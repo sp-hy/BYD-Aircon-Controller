@@ -1,6 +1,7 @@
 package com.sphy.airconcontroller.byd
 
 import android.content.Context
+import android.util.Log
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -13,6 +14,8 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.net.CookieManager
 import java.net.CookiePolicy
+
+private val mqttLock = Any()
 
 class BydApiClient(
     private val codec: EnvelopeCodec,
@@ -32,6 +35,7 @@ class BydApiClient(
     ) : this(BangcleCodec(context), httpClient)
 
     private var session: BydSession? = null
+    private var mqtt: BydMqttConnection? = null
 
     fun ensureCodecReady(): Boolean = codec.isTableLoaded()
 
@@ -59,7 +63,56 @@ class BydApiClient(
         if (userId.isBlank() || signToken.isBlank() || encryToken.isBlank()) {
             throw IllegalStateException("Login failed: missing token fields")
         }
-        return BydSession(userId, signToken, encryToken).also { session = it }
+        return BydSession(userId, signToken, encryToken).also {
+            stopMqtt()
+            session = it
+            tryStartMqtt(config)
+        }
+    }
+
+    private fun stopMqtt() {
+        synchronized(mqttLock) {
+            try {
+                mqtt?.stop()
+            } catch (_: Exception) {
+            }
+            mqtt = null
+        }
+        // Do not clear [BydRealtimeStore] here — every BLE action calls [login] again; clearing
+        // wiped MQTT vehicleInfo before it could merge into seat baselines.
+    }
+
+    /** pyBYD [fetch_mqtt_bootstrap] + TLS subscribe; failures are non-fatal (HTTP still works). */
+    private fun tryStartMqtt(config: BydConfig) {
+        Thread({
+            try {
+                synchronized(mqttLock) {
+                    val inner = postTokenJson(config, "/app/emqAuth/getEmqBrokerIp", buildInnerBase()) as? JSONObject
+                    if (inner == null || inner.length() == 0) {
+                        Log.w("BydMqtt", "empty broker response")
+                        return@synchronized
+                    }
+                    val brokerRaw = inner.optString("emqBorker", inner.optString("emqBroker", "")).trim()
+                    if (brokerRaw.isBlank()) {
+                        Log.w("BydMqtt", "missing emqBroker")
+                        return@synchronized
+                    }
+                    val (host, port) = BydMqttConnection.parseBrokerHostPort(brokerRaw)
+                    val cur = session ?: return@synchronized
+                    mqtt?.stop()
+                    mqtt = null
+                    val clientId = BydMqttConnection.buildClientId()
+                    val ts = System.currentTimeMillis() / 1000L
+                    val pwd = BydMqttConnection.buildMqttPassword(cur.signToken, clientId, cur.userId, ts)
+                    val key = CryptoUtils.md5Hex(cur.encryToken)
+                    val conn = BydMqttConnection(cur, key, host, port, clientId, pwd)
+                    conn.start()
+                    mqtt = conn
+                }
+            } catch (e: Exception) {
+                Log.w("BydMqtt", "start failed: ${e.message}")
+            }
+        }, "byd-mqtt-start").start()
     }
 
     private fun buildLoginOuter(config: BydConfig): JSONObject {
@@ -154,8 +207,7 @@ class BydApiClient(
     fun isClimateOn(config: BydConfig, vin: String): Boolean {
         val response = postTokenJson(config, "/control/getStatusNow", buildInnerBase().put("vin", vin))
         val obj = response as? JSONObject ?: return false
-        val status = obj.optInt("status", -1)
-        return status == 1
+        return SeatClimateParams.overallClimateStatus(obj) == 1
     }
 
     /**
@@ -213,20 +265,23 @@ class BydApiClient(
         level: SeatLevel
     ): CommandResult {
         val requestSerial = UUID.randomUUID().toString()
-        val payload = buildInnerBase()
-            .put("vin", vin)
-            .put("commandType", "VENTILATIONHEATING")
-            .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
-            .put("requestSerial", requestSerial)
 
-        // BYD expects every seat field on each command. Merge with live /control/getStatusNow like pyBYD
-        // SeatClimateParams.from_current_state(), then apply one change (camelCase keys per pyBYD).
+        // pyBYD SeatClimateParams.from_current_state(hvac, realtime): HTTP merge (root ∪ statusNow) +
+        // MQTT vehicleInfo fallback per field ([mergeHvacWithRealtimeFallback]).
         val statusRoot = runCatching { fetchHvacStatusNow(config, vin) }.getOrNull()
-        val statusSlice = statusRoot?.let { SeatClimateParams.effectiveStatusSlice(it) }
-        val base = when {
-            statusSlice == null || statusSlice.length() == 0 -> SeatClimateParams.fallbackDefaults()
-            !SeatClimateParams.sliceContainsSeatHints(statusSlice) -> SeatClimateParams.fallbackDefaults()
-            else -> SeatClimateParams.fromHvacStatusJson(statusSlice)
+        val merged = statusRoot?.let { SeatClimateParams.mergedHvacStatusForSeatBaseline(it) }
+        val rt = BydRealtimeStore.snapshotForVin(vin)
+        val hvacForSeat = when {
+            merged != null && merged.length() > 0 ->
+                SeatClimateParams.mergeHvacWithRealtimeFallback(merged, rt)
+            rt != null && rt.length() > 0 ->
+                JSONObject(rt.toString())
+            else -> null
+        }
+        val base = if (hvacForSeat == null || hvacForSeat.length() == 0) {
+            SeatClimateParams.fallbackDefaults()
+        } else {
+            SeatClimateParams.fromHvacStatusJson(hvacForSeat)
         }
 
         val controlParams = JSONObject(base.toString()).apply {
@@ -240,46 +295,52 @@ class BydApiClient(
                     SeatMode.COOL -> put("copilotVentilation", level.commandValue)
                 }
             }
-            SeatClimateParams.applyHeatVentMutualExclusion(this, position, mode, level)
-            SeatClimateParams.normalizeFrontSeatHeatNotApplicable(this)
+            // pyBYD only does with_change(one field); it does NOT force the opposite heat/vent channel.
             put("chairType", position.chairType)
             put("remoteMode", 1)
         }
+        SeatClimateParams.maskNonTargetFrontSeatAsNoChange(controlParams, position)
 
-        payload.put("controlParamsMap", controlParams.toString())
+        val controlParamsJson = SeatClimateParams.sortedControlParamsMapString(controlParams)
+        Log.i("BydSeat", "VENTILATIONHEATING controlParamsMap=$controlParamsJson")
 
-        runCatching {
-            postTokenJson(config, "/control/remoteControl", payload)
-        }.onFailure { ex ->
-            val msg = ex.message.orEmpty()
-            if (!msg.contains("/control/remoteControl failed: code=1001")) throw ex
-            // Same intermittent "Service error" as remoteControlResult; command may still apply.
-        }
-        repeat(10) {
-            val poll = buildInnerBase()
+        postRemoteControlTriggerWith6024Retry(config) {
+            buildInnerBase()
                 .put("vin", vin)
                 .put("commandType", "VENTILATIONHEATING")
                 .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
                 .put("requestSerial", requestSerial)
-            val result = try {
-                postTokenJson(config, "/control/remoteControlResult", poll) as? JSONObject ?: JSONObject()
-            } catch (ex: IllegalStateException) {
-                if (ex.message?.contains("/control/remoteControlResult failed: code=1001") == true) {
-                    return CommandResult(success = true, controlState = 1, requestSerial = requestSerial)
-                }
-                throw ex
-            }
-            val res = result.optInt("res", 0)
-            val controlState = result.optInt("controlState", 0)
-            val done = (res >= 2) || (controlState != 0) || result.has("result")
-            if (done) {
-                val success = (res == 2) || (controlState == 1)
-                val finalState = if (controlState != 0) controlState else if (success) 1 else 2
-                return CommandResult(success, finalState, requestSerial)
-            }
-            Thread.sleep(1500)
+                .put("controlParamsMap", controlParamsJson)
         }
-        return CommandResult(success = false, controlState = 0, requestSerial = requestSerial)
+        val cmdResult = run {
+            repeat(10) {
+                val poll = buildInnerBase()
+                    .put("vin", vin)
+                    .put("commandType", "VENTILATIONHEATING")
+                    .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
+                    .put("requestSerial", requestSerial)
+                val result = try {
+                    postTokenJson(config, "/control/remoteControlResult", poll) as? JSONObject ?: JSONObject()
+                } catch (ex: IllegalStateException) {
+                    if (ex.message?.contains("/control/remoteControlResult failed: code=1001") == true) {
+                        return@run CommandResult(success = true, controlState = 1, requestSerial = requestSerial)
+                    }
+                    throw ex
+                }
+                val res = result.optInt("res", 0)
+                val controlState = result.optInt("controlState", 0)
+                val done = (res >= 2) || (controlState != 0) || result.has("result")
+                if (done) {
+                    val success = (res == 2) || (controlState == 1)
+                    val finalState = if (controlState != 0) controlState else if (success) 1 else 2
+                    return@run CommandResult(success, finalState, requestSerial)
+                }
+                Thread.sleep(1500)
+            }
+            CommandResult(success = false, controlState = 0, requestSerial = requestSerial)
+        }
+
+        return cmdResult
     }
 
     private fun remoteControl(
@@ -289,17 +350,16 @@ class BydApiClient(
         controlParams: JSONObject?
     ): CommandResult {
         val requestSerial = UUID.randomUUID().toString()
-        val payload = buildInnerBase()
-            .put("vin", vin)
-            .put("commandType", command.commandType)
-            .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
-            .put("requestSerial", requestSerial)
-
-        if (controlParams != null) {
-            payload.put("controlParamsMap", controlParams.toString())
+        val controlMapStr = controlParams?.toString()
+        postRemoteControlTriggerWith6024Retry(config) {
+            val p = buildInnerBase()
+                .put("vin", vin)
+                .put("commandType", command.commandType)
+                .put("commandPwd", CryptoUtils.md5Hex(config.controlPin))
+                .put("requestSerial", requestSerial)
+            if (controlMapStr != null) p.put("controlParamsMap", controlMapStr)
+            p
         }
-
-        postTokenJson(config, "/control/remoteControl", payload)
         repeat(10) {
             val poll = buildInnerBase()
                 .put("vin", vin)
@@ -344,6 +404,44 @@ class BydApiClient(
         if (!vin.isNullOrBlank()) inner.put("vin", vin)
         if (!requestSerial.isNullOrBlank()) inner.put("requestSerial", requestSerial)
         return inner
+    }
+
+    /**
+     * pyBYD [poll_remote_control]: if the server still has a prior remote command in flight, it returns
+     * code **6024** ("Last operation is unfinished"). Retry the trigger POST with a fresh inner
+     * payload (new timeStamp/random/sign), same [requestSerial] and control params.
+     *
+     * Code **1001** on trigger is treated as optimistic success (command may still apply), matching
+     * existing behaviour for this endpoint.
+     */
+    private fun postRemoteControlTriggerWith6024Retry(
+        config: BydConfig,
+        buildPayload: () -> JSONObject
+    ) {
+        var last6024: IllegalStateException? = null
+        repeat(3) { attempt ->
+            try {
+                postTokenJson(config, "/control/remoteControl", buildPayload())
+                return
+            } catch (e: IllegalStateException) {
+                val msg = e.message.orEmpty()
+                when {
+                    msg.contains("code=1001") -> return
+                    msg.contains("code=6024") -> {
+                        last6024 = e
+                        if (attempt < 2) {
+                            Log.w(
+                                "BydApi",
+                                "remoteControl 6024 (prior operation unfinished), retry ${attempt + 2}/3 in 5s"
+                            )
+                            Thread.sleep(5000)
+                        }
+                    }
+                    else -> throw e
+                }
+            }
+        }
+        throw last6024 ?: IllegalStateException("/control/remoteControl failed after 6024 retries")
     }
 
     private fun postTokenJson(config: BydConfig, endpoint: String, inner: JSONObject): Any {

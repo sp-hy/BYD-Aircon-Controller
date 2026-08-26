@@ -44,6 +44,7 @@ dependencies {
     implementation(libs.androidx.security.crypto)
     implementation(libs.okhttp)
     implementation(libs.okhttp.urlconnection)
+    implementation(libs.paho.mqttv3)
     testImplementation(libs.junit)
     testImplementation(libs.mockwebserver)
     androidTestImplementation(libs.androidx.junit)

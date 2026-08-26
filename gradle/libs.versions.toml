@@ -12,6 +12,7 @@ constraintlayout = "2.2.0"
 securityCrypto = "1.1.0-alpha06"
 okhttp = "4.12.0"
 mockwebserver = "4.12.0"
+pahoMqtt = "1.2.5"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -26,6 +27,7 @@ androidx-security-crypto = { group = "androidx.security", name = "security-crypt
 okhttp = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }
 okhttp-urlconnection = { group = "com.squareup.okhttp3", name = "okhttp-urlconnection", version.ref = "okhttp" }
 mockwebserver = { group = "com.squareup.okhttp3", name = "mockwebserver", version.ref = "mockwebserver" }
+paho-mqttv3 = { group = "org.eclipse.paho", name = "org.eclipse.paho.client.mqttv3", version.ref = "pahoMqtt" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -10,33 +10,90 @@ import org.json.JSONObject
  */
 internal object SeatClimateParams {
 
-    private val SEAT_HINT_KEYS = arrayOf(
-        "mainSeatHeatState", "mainSeatVentilationState",
-        "copilotSeatHeatState", "copilotSeatVentilationState",
-        "lrSeatHeatState", "lrSeatVentilationState",
-        "lrThirdHeatState", "lrThirdVentilationState",
-        "rrSeatHeatState", "rrSeatVentilationState",
-        "rrThirdHeatState", "rrThirdVentilationState",
-        "steeringWheelHeatState", "stearingWheelHeatState",
-        "main_seat_heat_state", "main_seat_ventilation_state",
-        "copilot_seat_heat_state", "copilot_seat_ventilation_state"
-    )
+    /** Parse JSON number / numeric string the way pyBYD enums see after cleaning. */
+    fun jsonNumberToInt(raw: Any?): Int? {
+        return when (raw) {
+            null -> null
+            is Int -> raw
+            is Long -> raw.toInt()
+            is Double -> raw.toInt()
+            is Float -> raw.toInt()
+            is String -> raw.trim().toIntOrNull()
+            else -> null
+        }
+    }
 
-    /** True if the slice contains at least one seat-related field from the API. */
-    fun sliceContainsSeatHints(slice: JSONObject): Boolean =
-        SEAT_HINT_KEYS.any { slice.has(it) }
-
-    private fun JSONObject.optIntIfPresent(key: String): Int? {
+    private fun JSONObject.optIntFlexible(key: String): Int? {
         if (!has(key)) return null
-        return optInt(key)
+        return jsonNumberToInt(get(key))
     }
 
     private fun JSONObject.optIntAny(vararg keys: String): Int? {
         for (k in keys) {
-            val v = optIntIfPresent(k)
+            val v = optIntFlexible(k)
             if (v != null) return v
         }
         return null
+    }
+
+    /**
+     * HVAC `status` (1=on) for [isClimateOn]: prefer root, else [statusNow].
+     */
+    fun overallClimateStatus(root: JSONObject): Int {
+        if (root.has("status")) return root.optInt("status", -1)
+        val sn = root.optJSONObject("statusNow")
+        if (sn != null && sn.has("status")) return sn.optInt("status", -1)
+        return -1
+    }
+
+    /**
+     * Best single-shot snapshot for [fromHvacStatusJson] without MQTT realtime.
+     *
+     * pyBYD [SeatClimateParams.from_current_state] uses **hvac first, then realtime** to fill each
+     * seat field. The app only has `/control/getStatusNow`. BYD often puts some fields on the **root**
+     * and updates in **statusNow** — using only `statusNow` (HvacStatus unwrap) drops root-only
+     * seat keys; a **merge** approximates hvac ∪ realtime overlap. Keys in `statusNow` win on clash.
+     */
+    fun mergedHvacStatusForSeatBaseline(root: JSONObject): JSONObject {
+        val out = JSONObject()
+        val rootKeys = root.keys()
+        while (rootKeys.hasNext()) {
+            val k = rootKeys.next()
+            if (k == "statusNow") continue
+            out.put(k, root.get(k))
+        }
+        val sn = root.optJSONObject("statusNow")
+        if (sn != null) {
+            val snKeys = sn.keys()
+            while (snKeys.hasNext()) {
+                val k = snKeys.next()
+                out.put(k, sn.get(k))
+            }
+        }
+        if (out.has("stearingWheelHeatState") && !out.has("steeringWheelHeatState")) {
+            out.put("steeringWheelHeatState", out.get("stearingWheelHeatState"))
+        }
+        return out
+    }
+
+    /**
+     * pyBYD [SeatClimateParams.from_current_state]: each seat field from `hvac` if present, else
+     * `realtime`. Implemented by overlaying keys from [realtime] only where [hvac] lacks the key.
+     */
+    fun mergeHvacWithRealtimeFallback(hvac: JSONObject, realtime: JSONObject?): JSONObject {
+        if (realtime == null) return hvac
+        val out = JSONObject(hvac.toString())
+        val rtKeys = realtime.keys()
+        while (rtKeys.hasNext()) {
+            val k = rtKeys.next()
+            if (!out.has(k)) {
+                out.put(k, realtime.get(k))
+            }
+        }
+        if (out.has("stearingWheelHeatState") && !out.has("steeringWheelHeatState")) {
+            out.put("steeringWheelHeatState", out.get("stearingWheelHeatState"))
+        }
+        return out
     }
 
     private fun seatStatusToCommand(status: Int): Int = when (status) {
@@ -54,16 +111,37 @@ internal object SeatClimateParams {
     }
 
     /**
-     * Extracts the inner `statusNow` object if present (as pyBYD [HvacStatus] does).
+     * Remote session often ends when the car sees **no** active remote climate need. Sending explicit
+     * OFF (`3`) on **both** front seats (driver `main*` from HTTP + passenger `copilot*` vent off) can
+     * look like “everything off”, so the vehicle drops remote power. For the seat we are **not**
+     * changing, send `0` (no change) instead of mirroring getStatusNow OFF (`3`).
      */
-    fun effectiveStatusSlice(root: JSONObject): JSONObject {
-        val nested = root.optJSONObject("statusNow")
-        return nested ?: root
+    fun maskNonTargetFrontSeatAsNoChange(params: JSONObject, position: SeatPosition) {
+        when (position) {
+            SeatPosition.DRIVER -> {
+                params.put("copilotHeat", 0)
+                params.put("copilotVentilation", 0)
+            }
+            SeatPosition.PASSENGER -> {
+                params.put("mainHeat", 0)
+                params.put("mainVentilation", 0)
+            }
+        }
+    }
+
+    /** pyBYD serialises [controlParamsMap] with [json.dumps(..., sort_keys=True)]. */
+    fun sortedControlParamsMapString(params: JSONObject): String {
+        val keys = params.keys().asSequence().sorted().toList()
+        val sorted = JSONObject()
+        for (k in keys) {
+            sorted.put(k, params.get(k))
+        }
+        return sorted.toString()
     }
 
     /**
-     * Builds `controlParamsMap` fields from live HVAC status, using camelCase keys like pyBYD
-     * `model_dump(by_alias=True)` for [SeatClimateParams].
+     * Builds `controlParamsMap` from merged status (camelCase keys like pyBYD `model_dump(by_alias=True)`).
+     * Third-row fields are filled from JSON when present ([VehicleRealtimeData] in pyBYD); else 0.
      */
     fun fromHvacStatusJson(status: JSONObject): JSONObject {
         fun seatCmd(vararg keys: String): Int {
@@ -91,14 +169,12 @@ internal object SeatClimateParams {
         }
     }
 
-    /**
-     * pyBYD [SeatClimateParams] model defaults when status cannot be read.
-     */
+    /** When [getStatusNow] is unavailable or empty. Matches pyBYD missing enum → 0 for seat fields. */
     fun fallbackDefaults(): JSONObject {
         return JSONObject().apply {
-            put("mainHeat", 3)
+            put("mainHeat", 0)
             put("mainVentilation", 0)
-            put("copilotHeat", 3)
+            put("copilotHeat", 0)
             put("copilotVentilation", 0)
             put("lrSeatHeatState", 0)
             put("lrSeatVentilationState", 0)
@@ -109,38 +185,6 @@ internal object SeatClimateParams {
             put("rrThirdHeatState", 0)
             put("rrThirdVentilationState", 0)
             put("steeringWheelHeatState", 3)
-        }
-    }
-
-    /**
-     * Seat heat channels use 1/2/3 for HIGH/LOW/OFF. A merged value of **0** means "no data" from
-     * [getStatusNow]; some head units mis-handle 0 next to vent OFF and drop climate. Map 0 → 3 (OFF).
-     */
-    fun normalizeFrontSeatHeatNotApplicable(params: JSONObject) {
-        if (params.optInt("mainHeat", -1) == 0) params.put("mainHeat", 3)
-        if (params.optInt("copilotHeat", -1) == 0) params.put("copilotHeat", 3)
-    }
-
-    /**
-     * A seat cannot heat and ventilate at the same time. When turning one mode **on** (LOW/HIGH),
-     * force the opposite mode to command OFF (3). Matches real vehicle behaviour and avoids API 1001.
-     */
-    fun applyHeatVentMutualExclusion(
-        params: JSONObject,
-        position: SeatPosition,
-        mode: SeatMode,
-        level: SeatLevel
-    ) {
-        if (level == SeatLevel.OFF) return
-        when (position) {
-            SeatPosition.DRIVER -> when (mode) {
-                SeatMode.HEAT -> params.put("mainVentilation", 3)
-                SeatMode.COOL -> params.put("mainHeat", 3)
-            }
-            SeatPosition.PASSENGER -> when (mode) {
-                SeatMode.HEAT -> params.put("copilotVentilation", 3)
-                SeatMode.COOL -> params.put("copilotHeat", 3)
-            }
         }
     }
 }
