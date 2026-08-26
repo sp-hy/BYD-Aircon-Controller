@@ -88,20 +88,43 @@
             android:orientation="horizontal">
 
             <Button
-                android:id="@+id/tempDownButton"
+                android:id="@+id/driverTempDownButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginEnd="6dp"
                 android:layout_weight="1"
-                android:text="@string/temp_down" />
+                android:text="@string/driver_temp_down" />
 
             <Button
-                android:id="@+id/tempUpButton"
+                android:id="@+id/driverTempUpButton"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_marginStart="6dp"
                 android:layout_weight="1"
-                android:text="@string/temp_up" />
+                android:text="@string/driver_temp_up" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/passengerTempDownButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="@string/passenger_temp_down" />
+
+            <Button
+                android:id="@+id/passengerTempUpButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="@string/passenger_temp_up" />
         </LinearLayout>
 
         <LinearLayout
@@ -150,12 +173,51 @@
                 android:text="@string/ac_recirc" />
         </LinearLayout>
 
-        <Button
-            android:id="@+id/maxCoolButton"
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:text="@string/ac_max_cool" />
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/frontDemistButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="@string/ac_front_demist" />
+
+            <Button
+                android:id="@+id/rearDemistButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="@string/ac_rear_demist" />
+        </LinearLayout>
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/airOnlyButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginEnd="6dp"
+                android:layout_weight="1"
+                android:text="@string/ac_air_only" />
+
+            <Button
+                android:id="@+id/maxCoolButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:layout_weight="1"
+                android:text="@string/ac_max_cool" />
+        </LinearLayout>
 
         <Button
             android:id="@+id/dumpMethodsButton"

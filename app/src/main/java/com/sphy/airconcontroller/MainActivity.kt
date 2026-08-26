@@ -64,13 +64,18 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.refreshButton).setOnClickListener { refreshStatus() }
         findViewById<Button>(R.id.acOnButton).setOnClickListener { runAc("Climate ON") { ac.start() } }
         findViewById<Button>(R.id.acOffButton).setOnClickListener { runAc("Climate OFF") { ac.stop() } }
-        findViewById<Button>(R.id.tempDownButton).setOnClickListener { runAc("Temp −") { ac.nudgeDriverTemp(-1) } }
-        findViewById<Button>(R.id.tempUpButton).setOnClickListener { runAc("Temp +") { ac.nudgeDriverTemp(1) } }
-        findViewById<Button>(R.id.fanDownButton).setOnClickListener { runAc("Fan −") { ac.nudgeFan(-1) } }
-        findViewById<Button>(R.id.fanUpButton).setOnClickListener { runAc("Fan +") { ac.nudgeFan(1) } }
-        findViewById<Button>(R.id.autoButton).setOnClickListener { runAc("Auto") { ac.setAuto(true) } }
-        findViewById<Button>(R.id.recircButton).setOnClickListener { runAc("Recirc toggle") { ac.toggleRecirc() } }
-        findViewById<Button>(R.id.maxCoolButton).setOnClickListener { runAc("Max cool") { ac.setMaxCool(true) } }
+        findViewById<Button>(R.id.driverTempDownButton).setOnClickListener { runAc("Driver temp −") { ac.nudgeDriverTemp(-1) } }
+        findViewById<Button>(R.id.driverTempUpButton).setOnClickListener { runAc("Driver temp +") { ac.nudgeDriverTemp(1) } }
+        findViewById<Button>(R.id.passengerTempDownButton).setOnClickListener { runAc("Passenger temp −") { ac.nudgePassengerTemp(-1) } }
+        findViewById<Button>(R.id.passengerTempUpButton).setOnClickListener { runAc("Passenger temp +") { ac.nudgePassengerTemp(1) } }
+        findViewById<Button>(R.id.fanDownButton).setOnClickListener { runAc("Fan speed −") { ac.nudgeFan(-1) } }
+        findViewById<Button>(R.id.fanUpButton).setOnClickListener { runAc("Fan speed +") { ac.nudgeFan(1) } }
+        findViewById<Button>(R.id.autoButton).setOnClickListener { runAc("Auto mode") { ac.setAuto(true) } }
+        findViewById<Button>(R.id.recircButton).setOnClickListener { runAc("Recirculate / fresh air") { ac.toggleRecirc() } }
+        findViewById<Button>(R.id.frontDemistButton).setOnClickListener { runAc("Front demist") { ac.toggleFrontDefrost() } }
+        findViewById<Button>(R.id.rearDemistButton).setOnClickListener { runAc("Rear window and mirrors") { ac.toggleRearWindowHeat() } }
+        findViewById<Button>(R.id.airOnlyButton).setOnClickListener { runAc("Air only") { ac.toggleAirOnly() } }
+        findViewById<Button>(R.id.maxCoolButton).setOnClickListener { runAc("Max cooling") { ac.setMaxCool(true) } }
         findViewById<Button>(R.id.dumpMethodsButton).setOnClickListener {
             lifecycleScope.launch {
                 val dump = withContext(Dispatchers.IO) { ac.dumpMethods() }
