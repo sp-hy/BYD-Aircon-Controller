@@ -282,14 +282,32 @@ class BydAcController(context: Context) {
         return 3
     }
 
+    fun toggleAuto(): CommandResult {
+        if (!ensureDevice()) return notBound()
+        val auto = constInt("AC_CTRLMODE_AUTO", "AC_CONTROLMODE_AUTO", "AC_CTRL_MODE_AUTO") ?: CONTROL_AUTO
+        val currentlyAuto = getInt("getAcControlMode") == auto
+        return setAuto(!currentlyAuto)
+    }
+
     fun setAuto(enabled: Boolean): CommandResult {
         if (!ensureDevice()) return notBound()
-        val mode = if (enabled) CONTROL_AUTO else CONTROL_MANUAL
-        return firstSuccess(
-            { call("setAcControlMode", mode, SOURCE_VOICE) },
-            { call("setAcControlMode", mode, SOURCE_UI) },
-            { call("setAcControlMode", mode) },
+        val auto = constInt("AC_CTRLMODE_AUTO", "AC_CONTROLMODE_AUTO", "AC_CTRL_MODE_AUTO") ?: CONTROL_AUTO
+        val manual = constInt("AC_CTRLMODE_MANUAL", "AC_CONTROLMODE_MANUAL", "AC_CTRL_MODE_MANUAL") ?: CONTROL_MANUAL
+        val mode = if (enabled) auto else manual
+        // Same (source, value) order as cycle. (mode, SOURCE_VOICE=1) writes manual.
+        val attempts = listOf(
+            { call("setAcControlMode", SOURCE_VOICE, mode) },
+            { call("setAcControlMode", SOURCE_UI, mode) },
         )
+        var last = notBound()
+        for (attempt in attempts) {
+            val result = attempt()
+            pauseForEcu()
+            val after = getInt("getAcControlMode")
+            if (result.success && (after == mode || after == null)) return result
+            if (result.detail != "no such method") last = result
+        }
+        return last
     }
 
     fun toggleRecirc(): CommandResult {
@@ -355,54 +373,16 @@ class BydAcController(context: Context) {
     /** Rear window heater and wing-mirror heaters are one OEM switch. */
     fun toggleRearWindowHeat(): CommandResult {
         if (!ensureDevice()) return notBound()
-        val frontBefore = defrostState(frontDefrostArea())
-        val windBefore = getInt("getAcWindMode")
-        val currentlyOn = lastSetRearHeat ?: intToBool(rearHeatState()) ?: false
+        val currentlyOn = lastSetRearHeat ?: false
         val next = if (currentlyOn) 0 else 1
-
-        val cached = rearDefrostSetter
-        if (cached != null) {
-            val repeated = cached(next)
-            if (repeated.success && rearHeatReadback(next, frontBefore, windBefore)) {
-                lastSetRearHeat = next == 1
-                return repeated
-            }
-            rearDefrostSetter = null
-        }
-
-        val areas = linkedSetOf(
-            rearDefrostArea(),
-            constInt("AC_DEFROST_AREA_REAR", "AC_COMMAND_DEFROST_REAR", "AC_DEFROST_REAR") ?: 2,
-            2,
-            3,
-        ).filter { it != frontDefrostArea() }
-
-        val attempts = mutableListOf<(Int) -> CommandResult>()
-        for (name in REAR_HEAT_METHODS) {
-            attempts += { v -> call(name, SOURCE_UI, v) }
-            attempts += { v -> call(name, SOURCE_VOICE, v) }
-            attempts += { v -> call(name, v) }
-        }
-        for (area in areas) {
-            // Prefer source=0 so (2, 1, 1) cannot be misread as windshield.
-            attempts += { v -> call("setAcDefrostState", SOURCE_UI, area, v) }
-            attempts += { v -> call("setAcDefrostState", area, v, SOURCE_UI) }
-            attempts += { v -> call("setAcDefrostState", SOURCE_VOICE, area, v) }
-            attempts += { v -> call("setAcDefrostState", area, v, SOURCE_VOICE) }
-        }
-        attempts += { v -> callBodyworkRearDefrost(v) }
-
-        var last = notBound()
-        for (attempt in attempts) {
-            val result = attempt(next)
-            if (result.success && rearHeatReadback(next, frontBefore, windBefore)) {
-                rearDefrostSetter = attempt
-                lastSetRearHeat = next == 1
-                return result
-            }
-            if (result.detail != "no such method") last = result
-        }
-        return last
+        val area = constInt("AC_DEFROST_AREA_REAR") ?: 2
+        // Front demist uses (SOURCE_UI, area, state). The same with SOURCE_UI + rear area
+        // pulses the windscreen. The shotgun that actually started rear/mirrors was the
+        // next call: (SOURCE_VOICE, rear area, state). Electric-only does not drive this car.
+        call("setElectricDefrostState", next)
+        val result = call("setAcDefrostState", SOURCE_VOICE, area, next)
+        if (result.success) lastSetRearHeat = next == 1
+        return result
     }
 
     private fun toggleWindshieldDefrost(): CommandResult {
@@ -448,6 +428,7 @@ class BydAcController(context: Context) {
     }
 
     private fun rearHeatState(): Int? {
+        getInt("getElectricDefrostState")?.let { return it }
         getInt("getAcRearDefrostState")?.let { return it }
         getInt("getRearDefrostState")?.let { return it }
         getInt("getDefrostRearState")?.let { return it }
@@ -467,28 +448,32 @@ class BydAcController(context: Context) {
 
     fun toggleAirOnly(): CommandResult {
         if (!ensureDevice()) return notBound()
-        val currentlyOn = lastSetVentilation ?: intToBool(getInt("getAcVentilationState")) ?: false
+        val before = getInt("getAcVentilationState")
+        val currentlyOn = intToBool(before) ?: lastSetVentilation ?: false
         val next = if (currentlyOn) 0 else 1
-        val result = firstSuccess(
-            { call("setAcVentilationState", next, SOURCE_VOICE) },
-            { call("setAcVentilationState", next, SOURCE_UI) },
+        // (state, SOURCE_VOICE=1) always writes on, so off never applied.
+        val attempts = listOf(
             { call("setAcVentilationState", SOURCE_VOICE, next) },
             { call("setAcVentilationState", SOURCE_UI, next) },
-            { call("setAcVentilationState", next) },
         )
-        if (result.success) {
-            lastSetVentilation = next == 1
-            return result
+        var last = notBound()
+        for (attempt in attempts) {
+            val result = attempt()
+            pauseForEcu()
+            val after = getInt("getAcVentilationState")
+            if (result.success && (after == next || after == null)) {
+                lastSetVentilation = next == 1
+                return result
+            }
+            if (result.detail != "no such method") last = result
         }
-        // Some firmwares expose this as compressor off (0) rather than a ventilation flag.
         val compressorTarget = if (next == 1) 0 else 1
         val viaCompressor = firstSuccess(
-            { call("setAcCompressorMode", compressorTarget, SOURCE_VOICE) },
             { call("setAcCompressorMode", SOURCE_VOICE, compressorTarget) },
-            { call("setAcCompressorMode", compressorTarget) },
+            { call("setAcCompressorMode", SOURCE_UI, compressorTarget) },
         )
         if (viaCompressor.success) lastSetVentilation = next == 1
-        return viaCompressor
+        return if (viaCompressor.success) viaCompressor else last
     }
 
     fun setMaxCool(on: Boolean): CommandResult {

@@ -1,11 +1,14 @@
 package com.sphy.airconcontroller
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
@@ -25,6 +28,7 @@ import com.sphy.airconcontroller.storage.AppSettings
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
     private lateinit var settings: AppSettings
@@ -70,7 +74,7 @@ class MainActivity : AppCompatActivity() {
         findViewById<Button>(R.id.passengerTempUpButton).setOnClickListener { runAc("Passenger temp +") { ac.nudgePassengerTemp(1) } }
         findViewById<Button>(R.id.fanDownButton).setOnClickListener { runAc("Fan speed −") { ac.nudgeFan(-1) } }
         findViewById<Button>(R.id.fanUpButton).setOnClickListener { runAc("Fan speed +") { ac.nudgeFan(1) } }
-        findViewById<Button>(R.id.autoButton).setOnClickListener { runAc("Auto mode") { ac.setAuto(true) } }
+        findViewById<Button>(R.id.autoButton).setOnClickListener { runAc("Auto mode") { ac.toggleAuto() } }
         findViewById<Button>(R.id.recircButton).setOnClickListener { runAc("Recirculate / fresh air") { ac.toggleRecirc() } }
         findViewById<Button>(R.id.frontDemistButton).setOnClickListener { runAc("Front demist") { ac.toggleFrontDefrost() } }
         findViewById<Button>(R.id.rearDemistButton).setOnClickListener { runAc("Rear window and mirrors") { ac.toggleRearWindowHeat() } }
@@ -80,6 +84,10 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 val dump = withContext(Dispatchers.IO) { ac.dumpMethods() }
                 dumpText.text = dump
+                val path = withContext(Dispatchers.IO) { persistDump(dump) }
+                getSystemService(ClipboardManager::class.java)
+                    .setPrimaryClip(ClipData.newPlainText("AC dump", dump))
+                Snackbar.make(dumpText, getString(R.string.dump_saved, path), Snackbar.LENGTH_LONG).show()
             }
         }
 
@@ -218,5 +226,27 @@ class MainActivity : AppCompatActivity() {
         } else {
             arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
         }
+    }
+
+    private suspend fun persistDump(dump: String): String {
+        val file = File(getExternalFilesDir(null) ?: filesDir, "ac-dump.txt")
+        file.writeText(dump)
+        runCatching {
+            AdbPermissionManager.runShellCommand(
+                this,
+                "cp ${file.absolutePath} /data/local/tmp/ac-dump.txt"
+            )
+        }
+        // DiLink Logcat shows this app's W/E but drops I — use warn.
+        Log.w(DUMP_TAG, "dump begin ${dump.lineSequence().count()} lines -> ${file.absolutePath}")
+        dump.lineSequence().forEach { line ->
+            if (line.isNotEmpty()) Log.w(DUMP_TAG, line.take(4000))
+        }
+        Log.w(DUMP_TAG, "dump end — pull /data/local/tmp/ac-dump.txt")
+        return file.absolutePath
+    }
+
+    companion object {
+        private const val DUMP_TAG = "BydAcDump"
     }
 }

@@ -35,6 +35,7 @@
   <string name="ac_air_only">Air only</string>
   <string name="ac_max_cool">Max cooling</string>
   <string name="dump_methods">Dump AC methods</string>
+  <string name="dump_saved">Dump copied and saved to %1$s</string>
   <string name="ac_status_placeholder">AC status will appear here after ADB setup.</string>
   <string name="setup_needed">ADB setup needed. Enable USB debugging, then tap Authorize. Accept the car\'s USB debugging prompt.</string>
   <string name="setup_connecting">Connecting to local ADB…</string>

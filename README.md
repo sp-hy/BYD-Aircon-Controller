@@ -37,7 +37,7 @@ Hidden-API enforcement is captured at process fork. After consent the process re
 | Auto | `setAcControlMode` |
 | Recirc / fresh | `setAcCycleMode` (toggle) |
 | Front demist | `setAcDefrostState` / `setAcWindMode` (windscreen) |
-| Rear window and mirrors | Rear window and wing-mirror heaters (one OEM switch), `setAcDefrostState` rear area |
+| Rear window and mirrors | Rear window and wing-mirror heaters (one OEM switch). Tries `setElectricDefrostState` first, then AC rear-defrost overloads. |
 | Air only | `setAcVentilationState`; fallback `setAcCompressorMode` |
 | Max cool | `setAcMaxCoolingState` |
 
